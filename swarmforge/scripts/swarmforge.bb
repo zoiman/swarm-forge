@@ -3,6 +3,7 @@
 (ns swarmforge
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [cheshire.core :as json]
             [clojure.string :as str]))
 
 (def session-prefix "swarmforge")
@@ -144,7 +145,7 @@
 
 (def receive-modes #{"task" "batch"})
 (def propagation-modes #{"forward-only" "back-one" "back-all"})
-(def known-agents #{"claude" "codex" "copilot" "grok"})
+(def known-agents #{"agy" "claude" "codex" "copilot" "grok"})
 
 (defn receive-fields [trailing]
   (let [[receive-mode after-receive]
@@ -465,12 +466,41 @@
 (defn extra-has? [row needle]
   (str/includes? (or (:extra-args row) "") needle))
 
+(defn extra-has-flag? [row flag]
+  (boolean (re-find (re-pattern (str "(?:^|\\s)" (java.util.regex.Pattern/quote flag) "(?:\\s|=|$)"))
+                    (or (:extra-args row) ""))))
+
 (defn yolo-flag [agent row]
   (case agent
+    "agy" (if (or (extra-has-flag? row "--dangerously-skip-permissions")
+                  (extra-has-flag? row "--mode"))
+            ""
+            "--dangerously-skip-permissions ")
     "codex" (if (extra-has? row "--yolo") "" "--yolo ")
     "copilot" (if (extra-has? row "--yolo") "" "--yolo ")
     "claude" (if (extra-has? row "bypassPermissions") "" "--permission-mode bypassPermissions ")
     ""))
+
+(defn agy-trusted-workspaces [worktree]
+  (when-not (str/blank? (str worktree))
+    (let [raw (str worktree)
+          abs (str (fs/absolutize worktree))
+          real (when (fs/exists? worktree)
+                 (str (fs/real-path worktree)))]
+      (vec (distinct (remove str/blank? [abs real raw]))))))
+
+(defn agy-settings-json [worktree]
+  (let [trusted (agy-trusted-workspaces worktree)]
+    (json/generate-string
+     (cond-> {:altScreenMode "never"
+              :clearScrollbackOnResize false}
+       (seq trusted)
+       (assoc :trustedWorkspaces trusted)))))
+
+(defn agy-settings-flag [row]
+  (if (extra-has-flag? row "--settings")
+    ""
+    (str "--settings " (sq (agy-settings-json (:worktree-path row))) " ")))
 
 (defn grok-permission-prefix [row]
   "--permission-mode bypassPermissions ")
@@ -506,6 +536,11 @@
     (write-agent-instruction-file! ctx role prompt-file (last-pack-role? ctx role))
     (cond-> (str base
                 (case agent
+                  "agy" (str "agy "
+                             (agy-settings-flag row)
+                             (yolo-flag agent row)
+                             (extra-args-prefix row)
+                             (when initial-prompt? (str "-i " prompt)))
                   "claude" (str (alt-screen-env agent row)
                                 "claude --append-system-prompt-file " (sq (str prompt-file)) " "
                                 (yolo-flag agent row) "-n " (sq (str "SwarmForge " display)) " "

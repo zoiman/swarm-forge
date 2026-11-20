@@ -376,6 +376,86 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest agy-config-parses-role
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window coder agy master --model gemini-3-pro\n")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+      (let [result (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))]
+        (is (str/includes? (:out result) "coder Coder"))
+        (is (str/includes? (:out result) "agy"))
+        (is (str/includes? (:out result) "--model gemini-3-pro")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest agy-launch-command-passes-initial-prompt
+  (let [root (tmp-dir)]
+    (try
+      (let [result (run {:dir root}
+                        (script "swarmforge.bb")
+                        "--test-launch-command"
+                        (str root)
+                        "agy")
+            command (:out result)]
+        (is (str/includes? command "agy "))
+        (is (str/includes? command "\"altScreenMode\":\"never\""))
+        (is (str/includes? command "\"clearScrollbackOnResize\":false"))
+        (is (str/includes? command "\"trustedWorkspaces\""))
+        (is (str/includes? command (str (fs/real-path root))))
+        (is (str/includes? command "--dangerously-skip-permissions"))
+        (is (str/includes? command "-i \"$(cat "))
+        (is (str/includes? command ".swarmforge/prompts/coder.md"))
+        (is (fs/exists? (fs/path root ".swarmforge/prompts/coder.md"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest agy-launch-command-respects-extra-cli-args
+  (let [root (tmp-dir)]
+    (try
+      (let [with-mode (:out (run {:dir root}
+                                 (script "swarmforge.bb")
+                                 "--test-launch-command"
+                                 (str root)
+                                 "agy"
+                                 "--mode auto"))
+            with-settings (:out (run {:dir root}
+                                     (script "swarmforge.bb")
+                                     "--test-launch-command"
+                                     (str root)
+                                     "agy"
+                                     "--settings /tmp/custom.json"))
+            with-skip (:out (run {:dir root}
+                                 (script "swarmforge.bb")
+                                 "--test-launch-command"
+                                 (str root)
+                                 "agy"
+                                 "--dangerously-skip-permissions"))]
+        (is (str/includes? with-mode "--mode auto"))
+        (is (not (str/includes? with-mode "--dangerously-skip-permissions")))
+        (is (str/includes? with-settings "--settings /tmp/custom.json"))
+        (is (not (str/includes? with-settings "altScreenMode")))
+        (is (= 1 (count (re-seq #"--dangerously-skip-permissions" with-skip)))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest agy-lieutenant-launch-waits-for-chat
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/swarmforge.conf") "Lieutenant agy --model gemini-3-pro\n")
+      (let [command (:out (run {:dir root}
+                               (script "swarmforge.bb")
+                               "--test-lieutenant-launch-command"
+                               (str root)))]
+        (is (str/includes? command "agy "))
+        (is (str/includes? command "--dangerously-skip-permissions"))
+        (is (str/includes? command "--model gemini-3-pro"))
+        (is (not (str/includes? command " -i "))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest start-pack-web-drops-stale-dashboard-url
   ;; Given a leftover dashboard-url and pack_web.pid from a prior run
   ;; When SwarmForge prepares to start the dashboard
@@ -449,7 +529,8 @@
   ;; When SwarmForge builds the launch command
   ;; Then Codex and Copilot use --no-alt-screen, Claude disables the
   ;; alternate screen, and Grok keeps --minimal
-  (doseq [[agent needle] [["codex" "--no-alt-screen"]
+  (doseq [[agent needle] [["agy" "\"altScreenMode\":\"never\""]
+                          ["codex" "--no-alt-screen"]
                           ["copilot" "--no-alt-screen"]
                           ["claude" "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1"]
                           ["grok" "--minimal"]]]
@@ -484,7 +565,8 @@
   ;; Given a pack role with no extra-args
   ;; When --test-launch-command for each backend
   ;; Then the start command bypasses permission prompts
-  (doseq [[agent needle] [["codex" "--yolo"]
+  (doseq [[agent needle] [["agy" "--dangerously-skip-permissions"]
+                          ["codex" "--yolo"]
                           ["copilot" "--yolo"]
                           ["claude" "--permission-mode bypassPermissions"]
                           ["grok" "--permission-mode bypassPermissions"]]]

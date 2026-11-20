@@ -221,7 +221,7 @@
                  (re-find #"\bfound\b" n)))))
 
 (defn tool-trace? [sentence]
-  (boolean (re-find #"(?i)^(?:•\s*)?(?:Ran|Edited|Added)\b"
+  (boolean (re-find #"(?i)^(?:[•●]\s*)?(?:Ran|Edited|Added)\b"
                     (fold-apostrophe sentence))))
 
 (defn mail-banner? [sentence]
